@@ -1,129 +1,445 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Remote RS232 Terminal</title>
+    <title>MQTT ANSI Terminal</title>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
-        body {
-            font-family: 'Lucida Console', monospace;
-            background: #000;
-            color: #ccc;
+        body { 
+            font-family: 'Segoe UI', Tahoma, sans-serif; 
             margin: 0;
             padding: 20px;
+            background: #1a1a1a; 
+            color: #00ff00;
+            height: 100vh;
+            overflow: hidden;
         }
-        .terminal {
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .header {
+            margin-bottom: 15px;
+        }
+        .terminal-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
             background: #000;
             border: 2px solid #333;
-            padding: 15px;
-            height: 400px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #terminal {
+            flex: 1;
+            padding: 15px; 
             overflow: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.2;
             white-space: pre;
-            font-size: 12px;
         }
         .input-area {
-            margin-top: 15px;
             display: flex;
             gap: 10px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-top: 2px solid #333;
         }
-        input {
+        input { 
             flex: 1;
-            padding: 10px;
-            background: #111;
-            color: #ccc;
-            border: 1px solid #333;
-            font-family: monospace;
+            padding: 10px; 
+            background: #000;
+            color: #00ff00;
+            border: 1px solid #444;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
         }
-        button {
-            padding: 10px 20px;
-            background: #333;
-            color: #fff;
-            border: none;
+        input:focus {
+            outline: none;
+            border-color: #00ff00;
+        }
+        button { 
+            padding: 10px 20px; 
+            background: #006600; 
+            color: #00ff00; 
+            border: 1px solid #00ff00;
+            border-radius: 4px;
             cursor: pointer;
+            font-family: 'Consolas', monospace;
+        }
+        button:hover { 
+            background: #008800; 
+        }
+        .key-buttons {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 5px;
+            padding: 10px;
+            background: #2a2a2a;
+        }
+        .key-btn {
+            padding: 8px 5px;
+            background: #004400;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            text-align: center;
+        }
+        .key-btn:hover {
+            background: #006600;
         }
         .status {
-            margin-top: 10px;
-            padding: 10px;
-            background: #222;
+            padding: 8px;
+            background: #004400;
+            color: #00ff00;
+            font-size: 11px;
+            font-family: 'Consolas', monospace;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        .connection-panel {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .connection-status {
+            padding: 8px 15px;
+            border-radius: 4px;
             font-size: 12px;
+        }
+        .connected {
+            background: #006600;
+        }
+        .disconnected {
+            background: #660000;
         }
     </style>
 </head>
 <body>
-    <h2>🌐 Remote RS232 Terminal</h2>
-    
-    <div class="terminal" id="terminal">Connecting to MQTT...</div>
-    
-    <div class="input-area">
-        <input type="text" id="command" placeholder="Enter command..." onkeypress="handleKeyPress(event)">
-        <button onclick="sendCommand()">Send</button>
+    <div class="container">
+        <div class="header">
+            <h1>🖥️ MQTT ANSI Terminal</h1>
+            <div class="connection-panel">
+                <button onclick="connectMQTT()">Connect</button>
+                <button onclick="disconnectMQTT()">Disconnect</button>
+                <div id="connectionStatus" class="connection-status disconnected">Disconnected</div>
+            </div>
+        </div>
+        
+        <div class="terminal-container">
+            <div id="terminal"></div>
+        </div>
+
+        <div class="key-buttons">
+            <button class="key-btn" onclick="sendSpecialKey('ESC')">ESC</button>
+            <button class="key-btn" onclick="sendSpecialKey('UP')">↑</button>
+            <button class="key-btn" onclick="sendSpecialKey('DOWN')">↓</button>
+            <button class="key-btn" onclick="sendSpecialKey('LEFT')">←</button>
+            <button class="key-btn" onclick="sendSpecialKey('RIGHT')">→</button>
+            <button class="key-btn" onclick="sendSpecialKey('ENTER')">ENTER</button>
+            <button class="key-btn" onclick="sendSpecialKey('TAB')">TAB</button>
+            <button class="key-btn" onclick="sendSpecialKey('BACKSPACE')">⌫</button>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="command" placeholder="Type command..." 
+                   onkeydown="handleKeyDown(event)">
+            <button onclick="sendCommand()">Send</button>
+        </div>
+
+        <div class="status" id="status">
+            MQTT: HiveMQ | RS232: 9600,8N1 | ANSI mode
+        </div>
     </div>
-    
-    <div class="status" id="status">Disconnected</div>
 
     <script>
-        const terminal = document.getElementById('terminal');
-        const statusDiv = document.getElementById('status');
-        const commandInput = document.getElementById('command');
-        
-        // MQTT подключение
-        const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
-        
-        client.on('connect', () => {
-            statusDiv.textContent = 'Connected to MQTT broker';
-            client.subscribe('esp8266/rs232/data');
-            terminal.textContent += '\nConnected! Waiting for data...\n';
-        });
-        
-        client.on('message', (topic, message) => {
-            terminal.textContent += message.toString();
-            terminal.scrollTop = terminal.scrollHeight;
-        });
-        
-        client.on('error', (error) => {
-            statusDiv.textContent = 'Error: ' + error;
-        });
-        
-        function sendCommand() {
-            const command = commandInput.value;
-            if (command) {
-                client.publish('esp8266/rs232/commands', command);
-                terminal.textContent += '\n> ' + command + '\n';
-                commandInput.value = '';
-                terminal.scrollTop = terminal.scrollHeight;
+        class ANSITerminal {
+            constructor(terminalElement) {
+                this.term = terminalElement;
+                this.buffer = '';
+                this.cursorX = 1;
+                this.cursorY = 1;
+                this.rows = 24;
+                this.cols = 80;
+                this.initScreen();
+            }
+
+            initScreen() {
+                this.term.innerHTML = '';
+                for (let i = 0; i < this.rows; i++) {
+                    const line = document.createElement('div');
+                    line.className = 'term-line';
+                    line.style.whiteSpace = 'pre';
+                    line.textContent = ' '.repeat(this.cols);
+                    this.term.appendChild(line);
+                }
+            }
+
+            write(data) {
+                this.buffer += data;
+                this.processBuffer();
+            }
+
+            processBuffer() {
+                while (this.buffer.length > 0) {
+                    if (this.buffer[0] === '\x1B') {
+                        const match = this.buffer.match(/^\x1B\[([0-9;]*)([A-Za-z])/);
+                        if (match) {
+                            this.processEscapeSequence(match[1], match[2]);
+                            this.buffer = this.buffer.substring(match[0].length);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        const char = this.buffer[0];
+                        if (char === '\r') {
+                            this.cursorX = 1;
+                        } else if (char === '\n') {
+                            this.cursorY++;
+                            if (this.cursorY > this.rows) {
+                                this.scrollUp();
+                                this.cursorY = this.rows;
+                            }
+                        } else if (char === '\t') {
+                            this.cursorX = Math.floor((this.cursorX + 7) / 8) * 8 + 1;
+                            if (this.cursorX > this.cols) {
+                                this.cursorX = 1;
+                                this.cursorY++;
+                            }
+                        } else {
+                            this.putChar(char);
+                            this.cursorX++;
+                            if (this.cursorX > this.cols) {
+                                this.cursorX = 1;
+                                this.cursorY++;
+                                if (this.cursorY > this.rows) {
+                                    this.scrollUp();
+                                    this.cursorY = this.rows;
+                                }
+                            }
+                        }
+                        this.buffer = this.buffer.substring(1);
+                    }
+                }
+                this.updateCursor();
+            }
+
+            processEscapeSequence(params, command) {
+                const args = params.split(';').map(p => p === '' ? 1 : parseInt(p));
+                
+                switch (command) {
+                    case 'H':
+                    case 'f':
+                        this.cursorY = args[0] || 1;
+                        this.cursorX = args[1] || 1;
+                        break;
+                    case 'A':
+                        this.cursorY = Math.max(1, this.cursorY - (args[0] || 1));
+                        break;
+                    case 'B':
+                        this.cursorY = Math.min(this.rows, this.cursorY + (args[0] || 1));
+                        break;
+                    case 'C':
+                        this.cursorX = Math.min(this.cols, this.cursorX + (args[0] || 1));
+                        break;
+                    case 'D':
+                        this.cursorX = Math.max(1, this.cursorX - (args[0] || 1));
+                        break;
+                    case 'J':
+                        if (args[0] === 2) {
+                            this.clearScreen();
+                        }
+                        break;
+                    case 'K':
+                        this.clearLine();
+                        break;
+                    case 'm':
+                        break;
+                }
+            }
+
+            putChar(char) {
+                if (this.cursorY >= 1 && this.cursorY <= this.rows && 
+                    this.cursorX >= 1 && this.cursorX <= this.cols) {
+                    const line = this.term.children[this.cursorY - 1];
+                    let text = line.textContent;
+                    text = text.substring(0, this.cursorX - 1) + char + text.substring(this.cursorX);
+                    line.textContent = text;
+                }
+            }
+
+            clearScreen() {
+                for (let i = 0; i < this.rows; i++) {
+                    this.term.children[i].textContent = ' '.repeat(this.cols);
+                }
+                this.cursorX = 1;
+                this.cursorY = 1;
+            }
+
+            clearLine() {
+                if (this.cursorY >= 1 && this.cursorY <= this.rows) {
+                    this.term.children[this.cursorY - 1].textContent = ' '.repeat(this.cols);
+                }
+            }
+
+            scrollUp() {
+                this.term.removeChild(this.term.firstChild);
+                const newLine = document.createElement('div');
+                newLine.className = 'term-line';
+                newLine.style.whiteSpace = 'pre';
+                newLine.textContent = ' '.repeat(this.cols);
+                this.term.appendChild(newLine);
+            }
+
+            updateCursor() {
+                const lines = this.term.getElementsByClassName('term-line');
+                for (let line of lines) {
+                    line.style.backgroundColor = 'transparent';
+                }
+                if (this.cursorY >= 1 && this.cursorY <= this.rows) {
+                    const currentLine = this.term.children[this.cursorY - 1];
+                    currentLine.style.backgroundColor = '#003300';
+                }
             }
         }
+
+        const terminalElement = document.getElementById('terminal');
+        const commandInput = document.getElementById('command');
+        const statusDiv = document.getElementById('status');
+        const connectionStatus = document.getElementById('connectionStatus');
         
-        function handleKeyPress(event) {
+        let ansiTerminal = new ANSITerminal(terminalElement);
+        let isCtrlPressed = false;
+        let mqttClient = null;
+
+        // MQTT configuration
+        const MQTT_CONFIG = {
+            host: 'broker.hivemq.com',
+            port: 8083, // WebSocket port for HiveMQ
+            clientId: 'web-terminal-' + Math.random().toString(16).substr(2, 8),
+            topicOutput: 'esp8266/terminal/output',
+            topicInput: 'esp8266/terminal/input',
+            topicStatus: 'esp8266/terminal/status'
+        };
+
+        function connectMQTT() {
+            if (mqttClient && mqttClient.connected) {
+                return;
+            }
+
+            const url = `wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}/mqtt`;
+            
+            mqttClient = mqtt.connect(url, {
+                clientId: MQTT_CONFIG.clientId,
+                clean: true,
+                connectTimeout: 4000,
+                reconnectPeriod: 1000,
+            });
+
+            mqttClient.on('connect', function () {
+                console.log('Connected to MQTT broker');
+                connectionStatus.textContent = 'Connected';
+                connectionStatus.className = 'connection-status connected';
+                
+                // Subscribe to output topic
+                mqttClient.subscribe(MQTT_CONFIG.topicOutput, function (err) {
+                    if (!err) {
+                        console.log('Subscribed to output topic');
+                    }
+                });
+                
+                // Subscribe to status topic
+                mqttClient.subscribe(MQTT_CONFIG.topicStatus, function (err) {
+                    if (!err) {
+                        console.log('Subscribed to status topic');
+                    }
+                });
+            });
+
+            mqttClient.on('message', function (topic, message) {
+                const data = message.toString();
+                
+                if (topic === MQTT_CONFIG.topicOutput) {
+                    ansiTerminal.write(data);
+                } else if (topic === MQTT_CONFIG.topicStatus) {
+                    statusDiv.textContent = data;
+                }
+            });
+
+            mqttClient.on('error', function (error) {
+                console.error('MQTT error:', error);
+                connectionStatus.textContent = 'Error: ' + error;
+                connectionStatus.className = 'connection-status disconnected';
+            });
+
+            mqttClient.on('close', function () {
+                console.log('MQTT connection closed');
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'connection-status disconnected';
+            });
+        }
+
+        function disconnectMQTT() {
+            if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+            }
+        }
+
+        function sendCommand() {
+            const command = commandInput.value;
+            if (command && mqttClient && mqttClient.connected) {
+                mqttClient.publish(MQTT_CONFIG.topicInput, command);
+                commandInput.value = '';
+            }
+        }
+
+        function sendSpecialKey(key) {
+            let command = '';
+            switch(key) {
+                case 'ESC': command = '\x1B'; break;
+                case 'UP': command = '\x1B[A'; break;
+                case 'DOWN': command = '\x1B[B'; break;
+                case 'LEFT': command = '\x1B[D'; break;
+                case 'RIGHT': command = '\x1B[C'; break;
+                case 'ENTER': command = '\r'; break;
+                case 'TAB': command = '\t'; break;
+                case 'BACKSPACE': command = '\x08'; break;
+            }
+            
+            if (mqttClient && mqttClient.connected) {
+                mqttClient.publish(MQTT_CONFIG.topicInput, command);
+            }
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'Control') isCtrlPressed = true;
+            if (event.key === 'Alt') isAltPressed = true;
+
+            if (isCtrlPressed && event.key === 'c') {
+                sendSpecialKey('ESC');
+                event.preventDefault();
+            }
             if (event.key === 'Enter') {
                 sendCommand();
                 event.preventDefault();
             }
         }
-        
-        // Специальные команды
-        function sendSpecialKey(key) {
-            const commands = {
-                'ESC': '\x1B',
-                'ENTER': '\r',
-                'DOWN': '\x1B[B'
-            };
-            if (commands[key]) {
-                client.publish('esp8266/rs232/commands', commands[key]);
-                terminal.textContent += '\n[' + key + ']\n';
-                terminal.scrollTop = terminal.scrollHeight;
-            }
-        }
-        
-        // Кнопки для специальных команд
-        document.write(`
-            <div style="margin-top: 15px; display: flex; gap: 10px;">
-                <button onclick="sendSpecialKey('ESC')">ESC</button>
-                <button onclick="sendSpecialKey('ENTER')">ENTER</button>
-                <button onclick="sendSpecialKey('DOWN')">DOWN</button>
-            </div>
-        `);
+
+        commandInput.focus();
+        ansiTerminal.write('MQTT ANSI Terminal Ready\r\n');
+        ansiTerminal.write('Connect to MQTT broker to start\r\n');
+        ansiTerminal.write('ANSI escape sequences supported\r\n');
+
+        // Auto-connect on page load
+        connectMQTT();
     </script>
 </body>
 </html>
