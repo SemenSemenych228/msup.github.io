@@ -120,12 +120,35 @@
         .disconnected {
             background: #660000;
         }
+        .connecting {
+            background: #666600;
+        }
+        .config-panel {
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .config-input {
+            margin: 5px;
+            padding: 5px;
+            background: #000;
+            color: #00ff00;
+            border: 1px solid #444;
+            border-radius: 3px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🖥️ MQTT ANSI Terminal</h1>
+            <div class="config-panel">
+                <label>MQTT Broker:</label>
+                <input type="text" id="mqttBroker" value="ws://broker.hivemq.com:8000/mqtt" class="config-input" style="width: 300px;">
+                <label>Client ID:</label>
+                <input type="text" id="mqttClientId" value="web-terminal-" class="config-input" style="width: 150px;">
+            </div>
             <div class="connection-panel">
                 <button onclick="connectMQTT()">Connect</button>
                 <button onclick="disconnectMQTT()">Disconnect</button>
@@ -155,7 +178,7 @@
         </div>
 
         <div class="status" id="status">
-            MQTT: HiveMQ | RS232: 9600,8N1 | ANSI mode
+            MQTT Terminal - Disconnected
         </div>
     </div>
 
@@ -314,90 +337,120 @@
         const commandInput = document.getElementById('command');
         const statusDiv = document.getElementById('status');
         const connectionStatus = document.getElementById('connectionStatus');
+        const mqttBrokerInput = document.getElementById('mqttBroker');
+        const mqttClientIdInput = document.getElementById('mqttClientId');
         
         let ansiTerminal = new ANSITerminal(terminalElement);
         let isCtrlPressed = false;
         let mqttClient = null;
 
-        // MQTT configuration
-        const MQTT_CONFIG = {
-            host: 'broker.hivemq.com',
-            port: 8083, // WebSocket port for HiveMQ
-            clientId: 'web-terminal-' + Math.random().toString(16).substr(2, 8),
-            topicOutput: 'esp8266/terminal/output',
-            topicInput: 'esp8266/terminal/input',
-            topicStatus: 'esp8266/terminal/status'
+        // MQTT topics
+        const MQTT_TOPICS = {
+            output: 'esp8266/terminal/output',
+            input: 'esp8266/terminal/input',
+            status: 'esp8266/terminal/status'
         };
+
+        function updateConnectionStatus(status, message) {
+            connectionStatus.textContent = message;
+            connectionStatus.className = 'connection-status ' + status;
+            statusDiv.textContent = 'MQTT: ' + message;
+        }
 
         function connectMQTT() {
             if (mqttClient && mqttClient.connected) {
                 return;
             }
 
-            const url = `wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}/mqtt`;
-            
-            mqttClient = mqtt.connect(url, {
-                clientId: MQTT_CONFIG.clientId,
-                clean: true,
-                connectTimeout: 4000,
-                reconnectPeriod: 1000,
-            });
+            const brokerUrl = mqttBrokerInput.value;
+            const clientId = mqttClientIdInput.value + Math.random().toString(16).substr(2, 8);
 
-            mqttClient.on('connect', function () {
-                console.log('Connected to MQTT broker');
-                connectionStatus.textContent = 'Connected';
-                connectionStatus.className = 'connection-status connected';
-                
-                // Subscribe to output topic
-                mqttClient.subscribe(MQTT_CONFIG.topicOutput, function (err) {
-                    if (!err) {
-                        console.log('Subscribed to output topic');
+            updateConnectionStatus('connecting', 'Connecting...');
+
+            try {
+                mqttClient = mqtt.connect(brokerUrl, {
+                    clientId: clientId,
+                    clean: true,
+                    connectTimeout: 4000,
+                    reconnectPeriod: 1000,
+                });
+
+                mqttClient.on('connect', function () {
+                    console.log('Connected to MQTT broker');
+                    updateConnectionStatus('connected', 'Connected');
+                    
+                    // Subscribe to topics
+                    mqttClient.subscribe(MQTT_TOPICS.output, function (err) {
+                        if (err) {
+                            console.error('Subscription error:', err);
+                        } else {
+                            console.log('Subscribed to output topic');
+                        }
+                    });
+                    
+                    mqttClient.subscribe(MQTT_TOPICS.status, function (err) {
+                        if (err) {
+                            console.error('Subscription error:', err);
+                        } else {
+                            console.log('Subscribed to status topic');
+                        }
+                    });
+
+                    // Send connection status
+                    mqttClient.publish(MQTT_TOPICS.status, 'Web terminal connected');
+                });
+
+                mqttClient.on('message', function (topic, message) {
+                    const data = message.toString();
+                    
+                    if (topic === MQTT_TOPICS.output) {
+                        ansiTerminal.write(data);
+                    } else if (topic === MQTT_TOPICS.status) {
+                        statusDiv.textContent = 'Status: ' + data;
                     }
                 });
-                
-                // Subscribe to status topic
-                mqttClient.subscribe(MQTT_CONFIG.topicStatus, function (err) {
-                    if (!err) {
-                        console.log('Subscribed to status topic');
-                    }
+
+                mqttClient.on('error', function (error) {
+                    console.error('MQTT error:', error);
+                    updateConnectionStatus('disconnected', 'Error: ' + error.message);
                 });
-            });
 
-            mqttClient.on('message', function (topic, message) {
-                const data = message.toString();
-                
-                if (topic === MQTT_CONFIG.topicOutput) {
-                    ansiTerminal.write(data);
-                } else if (topic === MQTT_CONFIG.topicStatus) {
-                    statusDiv.textContent = data;
-                }
-            });
+                mqttClient.on('close', function () {
+                    console.log('MQTT connection closed');
+                    updateConnectionStatus('disconnected', 'Disconnected');
+                });
 
-            mqttClient.on('error', function (error) {
-                console.error('MQTT error:', error);
-                connectionStatus.textContent = 'Error: ' + error;
-                connectionStatus.className = 'connection-status disconnected';
-            });
+                mqttClient.on('offline', function () {
+                    console.log('MQTT offline');
+                    updateConnectionStatus('disconnected', 'Offline');
+                });
 
-            mqttClient.on('close', function () {
-                console.log('MQTT connection closed');
-                connectionStatus.textContent = 'Disconnected';
-                connectionStatus.className = 'connection-status disconnected';
-            });
+                mqttClient.on('reconnect', function () {
+                    console.log('MQTT reconnecting');
+                    updateConnectionStatus('connecting', 'Reconnecting...');
+                });
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateConnectionStatus('disconnected', 'Connection failed');
+            }
         }
 
         function disconnectMQTT() {
             if (mqttClient) {
                 mqttClient.end();
                 mqttClient = null;
+                updateConnectionStatus('disconnected', 'Disconnected');
             }
         }
 
         function sendCommand() {
             const command = commandInput.value;
             if (command && mqttClient && mqttClient.connected) {
-                mqttClient.publish(MQTT_CONFIG.topicInput, command);
+                mqttClient.publish(MQTT_TOPICS.input, command);
                 commandInput.value = '';
+            } else if (!mqttClient || !mqttClient.connected) {
+                alert('Not connected to MQTT broker');
             }
         }
 
@@ -415,7 +468,7 @@
             }
             
             if (mqttClient && mqttClient.connected) {
-                mqttClient.publish(MQTT_CONFIG.topicInput, command);
+                mqttClient.publish(MQTT_TOPICS.input, command);
             }
         }
 
@@ -433,13 +486,22 @@
             }
         }
 
+        function handleKeyUp(event) {
+            if (event.key === 'Control') isCtrlPressed = false;
+            if (event.key === 'Alt') isAltPressed = false;
+        }
+
+        // Initialize
         commandInput.focus();
         ansiTerminal.write('MQTT ANSI Terminal Ready\r\n');
-        ansiTerminal.write('Connect to MQTT broker to start\r\n');
+        ansiTerminal.write('Click "Connect" to start\r\n');
         ansiTerminal.write('ANSI escape sequences supported\r\n');
 
-        // Auto-connect on page load
-        connectMQTT();
+        // Add event listeners
+        document.addEventListener('keyup', handleKeyUp);
+
+        // Auto-connect (commented out for manual control)
+        // setTimeout(connectMQTT, 1000);
     </script>
 </body>
 </html>
