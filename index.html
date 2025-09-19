@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Remote RS232 Terminal</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body {
+            font-family: 'Lucida Console', monospace;
+            background: #000;
+            color: #ccc;
+            margin: 0;
+            padding: 20px;
+        }
+        .terminal {
+            background: #000;
+            border: 2px solid #333;
+            padding: 15px;
+            height: 400px;
+            overflow: auto;
+            white-space: pre;
+            font-size: 12px;
+        }
+        .input-area {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 10px;
+            background: #111;
+            color: #ccc;
+            border: 1px solid #333;
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 20px;
+            background: #333;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            background: #222;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h2>🌐 Remote RS232 Terminal</h2>
+    
+    <div class="terminal" id="terminal">Connecting to MQTT...</div>
+    
+    <div class="input-area">
+        <input type="text" id="command" placeholder="Enter command..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendCommand()">Send</button>
+    </div>
+    
+    <div class="status" id="status">Disconnected</div>
+
+    <script>
+        const terminal = document.getElementById('terminal');
+        const statusDiv = document.getElementById('status');
+        const commandInput = document.getElementById('command');
+        
+        // MQTT подключение
+        const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+        
+        client.on('connect', () => {
+            statusDiv.textContent = 'Connected to MQTT broker';
+            client.subscribe('esp8266/rs232/data');
+            terminal.textContent += '\nConnected! Waiting for data...\n';
+        });
+        
+        client.on('message', (topic, message) => {
+            terminal.textContent += message.toString();
+            terminal.scrollTop = terminal.scrollHeight;
+        });
+        
+        client.on('error', (error) => {
+            statusDiv.textContent = 'Error: ' + error;
+        });
+        
+        function sendCommand() {
+            const command = commandInput.value;
+            if (command) {
+                client.publish('esp8266/rs232/commands', command);
+                terminal.textContent += '\n> ' + command + '\n';
+                commandInput.value = '';
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        }
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendCommand();
+                event.preventDefault();
+            }
+        }
+        
+        // Специальные команды
+        function sendSpecialKey(key) {
+            const commands = {
+                'ESC': '\x1B',
+                'ENTER': '\r',
+                'DOWN': '\x1B[B'
+            };
+            if (commands[key]) {
+                client.publish('esp8266/rs232/commands', commands[key]);
+                terminal.textContent += '\n[' + key + ']\n';
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        }
+        
+        // Кнопки для специальных команд
+        document.write(`
+            <div style="margin-top: 15px; display: flex; gap: 10px;">
+                <button onclick="sendSpecialKey('ESC')">ESC</button>
+                <button onclick="sendSpecialKey('ENTER')">ENTER</button>
+                <button onclick="sendSpecialKey('DOWN')">DOWN</button>
+            </div>
+        `);
+    </script>
+</body>
+</html>
