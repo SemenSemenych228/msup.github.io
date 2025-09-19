@@ -9,9 +9,14 @@
         body {
             font-family: 'Lucida Console', monospace;
             background: #000;
-            color: #ccc;
+            color: #0f0;
             margin: 0;
             padding: 20px;
+        }
+        .header {
+            margin-bottom: 15px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
         }
         .terminal {
             background: #000;
@@ -19,8 +24,9 @@
             padding: 15px;
             height: 400px;
             overflow: auto;
-            white-space: pre;
+            white-space: pre-wrap;
             font-size: 12px;
+            line-height: 1.2;
         }
         .input-area {
             margin-top: 15px;
@@ -31,97 +37,239 @@
             flex: 1;
             padding: 10px;
             background: #111;
-            color: #ccc;
+            color: #0f0;
             border: 1px solid #333;
             font-family: monospace;
+            font-size: 12px;
+        }
+        input:focus {
+            outline: none;
+            border-color: #0f0;
         }
         button {
             padding: 10px 20px;
-            background: #333;
-            color: #fff;
-            border: none;
+            background: #222;
+            color: #0f0;
+            border: 1px solid #333;
             cursor: pointer;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button:hover {
+            background: #333;
         }
         .status {
             margin-top: 10px;
             padding: 10px;
+            background: #111;
+            font-size: 11px;
+            border: 1px solid #333;
+        }
+        .connected {
+            color: #0f0;
+        }
+        .disconnected {
+            color: #f00;
+        }
+        .special-keys {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .special-key {
+            padding: 8px 15px;
             background: #222;
-            font-size: 12px;
+            color: #0f0;
+            border: 1px solid #333;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 11px;
+        }
+        .special-key:hover {
+            background: #333;
         }
     </style>
 </head>
 <body>
-    <h2>🌐 Remote RS232 Terminal</h2>
+    <div class="header">
+        <h2>🌐 Remote RS232 Terminal</h2>
+    </div>
     
-    <div class="terminal" id="terminal">Connecting to MQTT...</div>
+    <div class="terminal" id="terminal">Connecting to MQTT broker...</div>
+    
+    <div class="special-keys">
+        <button class="special-key" onclick="sendSpecialKey('ESC')">ESC</button>
+        <button class="special-key" onclick="sendSpecialKey('ENTER')">ENTER</button>
+        <button class="special-key" onclick="sendSpecialKey('UP')">↑ UP</button>
+        <button class="special-key" onclick="sendSpecialKey('DOWN')">↓ DOWN</button>
+        <button class="special-key" onclick="sendSpecialKey('LEFT')">← LEFT</button>
+        <button class="special-key" onclick="sendSpecialKey('RIGHT')">→ RIGHT</button>
+        <button class="special-key" onclick="sendSpecialKey('TAB')">TAB</button>
+        <button class="special-key" onclick="sendSpecialKey('BACKSPACE')">BACKSPACE</button>
+    </div>
     
     <div class="input-area">
         <input type="text" id="command" placeholder="Enter command..." onkeypress="handleKeyPress(event)">
-        <button onclick="sendCommand()">Send</button>
+        <button onclick="sendCommand()">Send Command</button>
     </div>
     
-    <div class="status" id="status">Disconnected</div>
+    <div class="status" id="status">Status: Disconnected</div>
 
     <script>
         const terminal = document.getElementById('terminal');
         const statusDiv = document.getElementById('status');
         const commandInput = document.getElementById('command');
         
-        // MQTT подключение
-        const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
-        
-        client.on('connect', () => {
-            statusDiv.textContent = 'Connected to MQTT broker';
-            client.subscribe('esp8266/rs232/data');
-            terminal.textContent += '\nConnected! Waiting for data...\n';
-        });
-        
-        client.on('message', (topic, message) => {
-            terminal.textContent += message.toString();
-            terminal.scrollTop = terminal.scrollHeight;
-        });
-        
-        client.on('error', (error) => {
-            statusDiv.textContent = 'Error: ' + error;
-        });
-        
+        let mqttClient = null;
+        let isConnected = false;
+
+        // MQTT конфигурация
+        const MQTT_CONFIG = {
+            host: 'wss://broker.hivemq.com:8884/mqtt',
+            topics: {
+                output: 'esp8266/rs232/data',
+                input: 'esp8266/rs232/commands',
+                status: 'esp8266/rs232/status'
+            }
+        };
+
+        function connectMQTT() {
+            if (mqttClient && mqttClient.connected) {
+                return;
+            }
+
+            statusDiv.textContent = 'Status: Connecting to MQTT broker...';
+            statusDiv.className = 'status';
+
+            try {
+                mqttClient = mqtt.connect(MQTT_CONFIG.host, {
+                    clientId: 'web-terminal-' + Math.random().toString(16).substr(2, 8),
+                    clean: true,
+                    connectTimeout: 4000,
+                    reconnectPeriod: 1000
+                });
+
+                mqttClient.on('connect', () => {
+                    isConnected = true;
+                    statusDiv.textContent = 'Status: Connected to MQTT broker';
+                    statusDiv.className = 'status connected';
+                    
+                    // Подписываемся на топики
+                    mqttClient.subscribe(MQTT_CONFIG.topics.output, (err) => {
+                        if (!err) {
+                            terminal.textContent += '\n✓ Subscribed to data topic\n';
+                        }
+                    });
+                    
+                    mqttClient.subscribe(MQTT_CONFIG.topics.status, (err) => {
+                        if (!err) {
+                            terminal.textContent += '\n✓ Subscribed to status topic\n';
+                        }
+                    });
+
+                    terminal.textContent += '\n✓ Connected! Waiting for data...\n';
+                    terminal.scrollTop = terminal.scrollHeight;
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    const data = message.toString();
+                    
+                    if (topic === MQTT_CONFIG.topics.output) {
+                        terminal.textContent += data;
+                        terminal.scrollTop = terminal.scrollHeight;
+                    } else if (topic === MQTT_CONFIG.topics.status) {
+                        statusDiv.textContent = 'Status: ' + data;
+                    }
+                });
+
+                mqttClient.on('error', (error) => {
+                    statusDiv.textContent = 'Status: Error - ' + error.message;
+                    statusDiv.className = 'status disconnected';
+                    terminal.textContent += '\n✗ Connection error: ' + error.message + '\n';
+                });
+
+                mqttClient.on('close', () => {
+                    isConnected = false;
+                    statusDiv.textContent = 'Status: Disconnected';
+                    statusDiv.className = 'status disconnected';
+                    terminal.textContent += '\n✗ Disconnected from MQTT broker\n';
+                });
+
+                mqttClient.on('reconnect', () => {
+                    statusDiv.textContent = 'Status: Reconnecting...';
+                    terminal.textContent += '\n↻ Reconnecting...\n';
+                });
+
+            } catch (error) {
+                statusDiv.textContent = 'Status: Connection failed';
+                statusDiv.className = 'status disconnected';
+                terminal.textContent += '\n✗ Connection failed: ' + error + '\n';
+            }
+        }
+
+        function disconnectMQTT() {
+            if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+                isConnected = false;
+            }
+        }
+
         function sendCommand() {
-            const command = commandInput.value;
-            if (command) {
-                client.publish('esp8266/rs232/commands', command);
+            const command = commandInput.value.trim();
+            if (command && isConnected) {
+                mqttClient.publish(MQTT_CONFIG.topics.input, command);
                 terminal.textContent += '\n> ' + command + '\n';
                 commandInput.value = '';
                 terminal.scrollTop = terminal.scrollHeight;
+            } else if (!isConnected) {
+                terminal.textContent += '\n✗ Not connected to MQTT broker\n';
+                terminal.scrollTop = terminal.scrollHeight;
             }
         }
-        
+
+        function sendSpecialKey(key) {
+            const commands = {
+                'ESC': '\x1B',
+                'ENTER': '\r',
+                'UP': '\x1B[A',
+                'DOWN': '\x1B[B',
+                'LEFT': '\x1B[D',
+                'RIGHT': '\x1B[C',
+                'TAB': '\t',
+                'BACKSPACE': '\x08'
+            };
+            
+            if (commands[key] && isConnected) {
+                mqttClient.publish(MQTT_CONFIG.topics.input, commands[key]);
+                terminal.textContent += '\n[' + key + ']\n';
+                terminal.scrollTop = terminal.scrollHeight;
+            } else if (!isConnected) {
+                terminal.textContent += '\n✗ Not connected to MQTT broker\n';
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        }
+
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
                 sendCommand();
                 event.preventDefault();
             }
         }
-        
-        // Специальные команды
-        function sendSpecialKey(key) {
-            const commands = {
-                'ESC': '\x1B',
-                'ENTER': '\r',
-                'DOWN': '\x1B[B'
-            };
-            if (commands[key]) {
-                client.publish('esp8266/rs232/commands', commands[key]);
-                terminal.textContent += '\n[' + key + ']\n';
-                terminal.scrollTop = terminal.scrollHeight;
-            }
-        }
-        
-        // Кнопки для специальных команд
+
+        // Автоподключение при загрузке
+        window.onload = function() {
+            connectMQTT();
+            commandInput.focus();
+        };
+
+        // Кнопки управления подключением
         document.write(`
             <div style="margin-top: 15px; display: flex; gap: 10px;">
-                <button onclick="sendSpecialKey('ESC')">ESC</button>
-                <button onclick="sendSpecialKey('ENTER')">ENTER</button>
-                <button onclick="sendSpecialKey('DOWN')">DOWN</button>
+                <button onclick="connectMQTT()" style="background: #262; color: #fff;">Connect</button>
+                <button onclick="disconnectMQTT()" style="background: #622; color: #fff;">Disconnect</button>
+                <button onclick="terminal.textContent = ''" style="background: #226; color: #fff;">Clear Terminal</button>
             </div>
         `);
     </script>
